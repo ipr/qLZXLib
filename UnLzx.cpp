@@ -9,10 +9,9 @@
 // unlzx.c 1.1 (03.4.01, Erik Meusel)
 //
 
-//#include "stdafx.h"
 #include "UnLzx.h"
 
-
+// table for 32-bit CRC calculating
 static const unsigned int g_crc_table[256]=
 {
  0x00000000,0x77073096,0xEE0E612C,0x990951BA,0x076DC419,0x706AF48F,
@@ -64,26 +63,21 @@ static const unsigned int g_crc_table[256]=
 /* for people so I changed back to ~.                                     */
 void crc_calc(const unsigned char *memory, unsigned int length, unsigned int &sum)
 {
-	// instead of making this register,
-	// reducing file-IO would be more useful.. 
-	// (not all compilers honor that anyway..)
-	// also inlining this might be more efficient
-	//register unsigned int temp;
-
-	if(length)
+	if (length == 0)
 	{
-		unsigned int temp = ~sum; /* was (sum ^ 4294967295) */
-		do
-		{
-			temp = g_crc_table[(*memory++ ^ temp) & 255] ^ (temp >> 8);
-		} while(--length);
-		sum = ~temp; /* was (temp ^ 4294967295) */
+		return;
 	}
+	
+	unsigned int temp = ~sum; /* was (sum ^ 4294967295) */
+	do
+	{
+		temp = g_crc_table[(*memory++ ^ temp) & 255] ^ (temp >> 8);
+	} while(--length);
+	sum = ~temp; /* was (temp ^ 4294967295) */
 }
 
+
 // TODO: make buffers variable in size..
-//const int g_iReadBufferSize = 16384;
-//const int g_iDecrunchBufferSize = 258+65536+258;
 
 unsigned char read_buffer[16384]; /* have a reasonable sized read buffer */
 unsigned char decrunch_buffer[258+65536+258]; /* allow overrun for speed */
@@ -648,34 +642,38 @@ void CUnLzx::ReadEntryHeader(CAnsiFile &ArchiveFile, CArchiveEntry &Entry)
 
 	// temp for string-reading
 	unsigned int uiStringLen = 0;
+	
+	// prepare for reading (can remain larger if it is),
+	// zero entire buffer
+	m_ReadBuffer.PrepareBuffer(256, false);
+	unsigned char *pBuf = m_ReadBuffer.GetBegin();
 
-	// get value and reset for counting crc (set zero where header CRC)
+	// get value and reset for counting crc (set zero where header CRC):
+	// count CRC of this portion with zero in CRC-bytes
 	Entry.m_uiCrc = Entry.m_Header.TakeCrcBytes();
 	crc_calc(Entry.m_Header.archive_header, 31, uiCrcSum);
 
 	// read file name
-	unsigned char header_filename[256];
 	uiStringLen = Entry.m_Header.GetFileNameLength();
-	if (ArchiveFile.Read(header_filename, uiStringLen) == false)
+	if (ArchiveFile.Read(pBuf, uiStringLen) == false)
 	{
 		throw IOException("Failed reading string: filename");
 	}
 
-	header_filename[uiStringLen] = 0;
-	crc_calc(header_filename, uiStringLen, uiCrcSum); // update CRC
-	Entry.m_szFileName = (char*)header_filename; // keep as string
+	pBuf[uiStringLen] = 0;                 // null-terminate
+	crc_calc(pBuf, uiStringLen, uiCrcSum); // update CRC
+	Entry.m_szFileName = (char*)pBuf;      // keep as string
 
 	// read comment
-	unsigned char header_comment[256];
 	uiStringLen = Entry.m_Header.GetCommentLength();
-	if (ArchiveFile.Read(header_comment, uiStringLen) == false)
+	if (ArchiveFile.Read(pBuf, uiStringLen) == false)
 	{
 		throw IOException("Failed reading string: comment");
 	}
 
-	header_comment[uiStringLen] = 0;
-	crc_calc(header_comment, uiStringLen, uiCrcSum); // update CRC
-	Entry.m_szComment = (char*)header_comment; // keep as string
+	pBuf[uiStringLen] = 0;                 // null-terminate
+	crc_calc(pBuf, uiStringLen, uiCrcSum); // update CRC
+	Entry.m_szComment = (char*)pBuf;       // keep as string
 
 	// verify counted crc against the one read from file
 	// (in case of corruption of file),
@@ -708,9 +706,25 @@ bool CUnLzx::ViewArchive(CAnsiFile &ArchiveFile)
 		}
 
 		// add mapping of this offset to entry-information
-		m_EntryList.insert(tArchiveEntryList::value_type(lEntryOffset,CArchiveEntry()));
-		auto itEntry = m_EntryList.find(lEntryOffset); // locate it again
+		//m_EntryList.insert(tArchiveEntryList::value_type(lEntryOffset,CArchiveEntry()));
+		//auto itEntry = m_EntryList.find(lEntryOffset); // locate it again
 
+		auto itEntry = m_EntryList.find(lEntryOffset); // try to locate this..
+		if (itEntry == m_EntryList.end())
+		{
+			// add mapping of this offset to entry-information
+			m_EntryList.insert(tArchiveEntryList::value_type(lEntryOffset,CArchiveEntry()));
+			itEntry = m_EntryList.find(lEntryOffset); // locate it again
+		}
+		
+		/*
+		if ((lEntryOffset + 31) >= ArchiveFile.GetSize())
+		{
+			// near or at end of file -> no more headers
+			return true;
+		}
+		*/
+		
 		// read entry header from archive
 		if (ArchiveFile.Read(itEntry->second.m_Header.archive_header, 31) == false)
 		{
@@ -724,6 +738,14 @@ bool CUnLzx::ViewArchive(CAnsiFile &ArchiveFile)
 
 		// count some statistical information
 		AddCounters(itEntry->second);
+		
+		// TODO: if file starts a merged group, add info to list
+		/*
+		m_GroupList.insert(tMergeGroupList::value_type(lEntryOffset, CMergeGroup()));
+		auto itGroup = m_GroupList.find(lEntryOffset);
+		CMergeGroup *pGroup = &(itGroup->second);
+		itEntry->second.SetGroup(pGroup);
+		*/
 
 		/* seek past the packed data */
 		if (itEntry->second.m_ulPackedSize)
@@ -762,6 +784,7 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 	source_end = (source = read_buffer + 16384) - 1024;
 	pos = destination_end = destination = decrunch_buffer + 258 + 65536;
 
+	// TODO: use merged group information in extraction
 	// TODO: check that already extracted isn't handled again?
 	auto itEntry = m_EntryList.begin();
 	while (itEntry != m_EntryList.end())
@@ -800,9 +823,9 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 					if(count)
 					{
 						/* copy the remaining overrun to the start of the buffer */
-						// note: in theory could replace loop with
-						// ::memcpy(temp, source, count);
-						// but may overlap memory areas so can't use memcpy()..
+						// note: in theory could use memcpy
+						// but memory-areas may be overlapping partially
+						// -> can't use memcpy() safely..
 						do
 						{
 							*temp++ = *source++;
@@ -934,27 +957,35 @@ bool CUnLzx::ExtractStore(CAnsiFile &ArchiveFile)
 
 		// why this?
 		// in this method of packing there is no compression
-		// -> only read&write same amount as actually is in archive..?
+		// -> only read&write same amount as actually is in archive..
+		// (case for a corrupted file?)
 		//
 		if (unpack_size > Entry.m_ulPackedSize) 
 		{
 			unpack_size = Entry.m_ulPackedSize;
 		}
+		
+		// prepare buffer to at least given size
+		// (keep if it is larger, allocate if not),
+		// zero existing memory
+		m_ReadBuffer.PrepareBuffer(16384, false);
+		size_t nBufSize = m_ReadBuffer.GetSize();
+		unsigned char *pReadBuf = m_ReadBuffer.GetBegin();
 
 		while (unpack_size > 0)
 		{
-			count = (unpack_size > 16384) ? 16384 : unpack_size;
+			count = (unpack_size > nBufSize) ? nBufSize : unpack_size;
 
 			// must succeed reading wanted
-			if (ArchiveFile.Read(read_buffer, count) == false)
+			if (ArchiveFile.Read(pReadBuf, count) == false)
 			{
 				throw IOException("Failed to read entry from archive");
 			}
 			m_pack_size -= count;
 
-			crc_calc(read_buffer, count, uiCrcSum);
+			crc_calc(pReadBuf, count, uiCrcSum);
 
-			if (ArchiveFile.Write(read_buffer, count) == false)
+			if (ArchiveFile.Write(pReadBuf, count) == false)
 			{
 				throw ArcException("Failed to write to output-entry", Entry.m_szFileName);
 			}
@@ -1008,6 +1039,7 @@ bool CUnLzx::ExtractArchive()
 		// TODO: for merged files, use temporary list of each entry
 		// so that we only extract those in same merge
 		// and not twice any file already extracted?
+		// TODO: use merged group information in extraction
 
 		auto itEntry = m_EntryList.find(lEntryOffset); // try to locate this..
 		if (itEntry == m_EntryList.end())
@@ -1016,6 +1048,14 @@ bool CUnLzx::ExtractArchive()
 			m_EntryList.insert(tArchiveEntryList::value_type(lEntryOffset,CArchiveEntry()));
 			itEntry = m_EntryList.find(lEntryOffset); // locate it again
 		}
+		
+		/*
+		if ((lEntryOffset + 31) >= ArchiveFile.GetSize())
+		{
+			// near or at end of file -> no more headers
+			return true;
+		}
+		*/
 
 		// read entry header from archive
 		if (ArchiveFile.Read(itEntry->second.m_Header.archive_header, 31) == false)
