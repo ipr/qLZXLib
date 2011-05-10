@@ -1004,7 +1004,7 @@ bool CUnLzx::ExtractStore(CAnsiFile &ArchiveFile)
 
 			crc_calc(pReadBuf, count, uiCrcSum);
 
-			if (ArchiveFile.Write(pReadBuf, count) == false)
+			if (OutFile.Write(pReadBuf, count) == false)
 			{
 				throw ArcException("Failed to write to output-entry", Entry.m_szFileName);
 			}
