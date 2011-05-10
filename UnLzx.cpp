@@ -61,19 +61,21 @@ static const unsigned int g_crc_table[256]=
 
 /* Possible problems with 64 bit machines here. It kept giving warnings   */
 /* for people so I changed back to ~.                                     */
-void crc_calc(const unsigned char *memory, unsigned int length, unsigned int &sum)
+inline void crc_calc(const unsigned char *memory, unsigned int length, unsigned int &sum)
 {
-	if (length == 0)
+	// putting more likely case first seems to be 
+	// most efficient for CPU branch-prediction 
+	// when 'likely' keyword isn't supported..
+	// -> changed back
+	if (length)
 	{
-		return;
+		unsigned int temp = ~sum; /* was (sum ^ 4294967295) */
+		do
+		{
+			temp = g_crc_table[(*memory++ ^ temp) & 255] ^ (temp >> 8);
+		} while(--length);
+		sum = ~temp; /* was (temp ^ 4294967295) */
 	}
-	
-	unsigned int temp = ~sum; /* was (sum ^ 4294967295) */
-	do
-	{
-		temp = g_crc_table[(*memory++ ^ temp) & 255] ^ (temp >> 8);
-	} while(--length);
-	sum = ~temp; /* was (temp ^ 4294967295) */
 }
 
 
@@ -89,7 +91,7 @@ unsigned char *destination_end;
 
 unsigned int g_decrunch_method = 0;
 unsigned int g_decrunch_length = 0;
-unsigned int last_offset = 1;
+//unsigned int g_last_offset = 1;
 unsigned int g_global_control = 0; /* initial control word */
 int g_global_shift = -16;
 
@@ -122,41 +124,53 @@ static const unsigned char table_four[34]=
  0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
 };
 
+// (TODO: can we inline __stdcall / cdecl functions like this or only within class.. ?)
+// seems supported, no guarantee though..
+inline unsigned int reverse_position(unsigned int &fill, unsigned int &reverse)
+{
+	/* reverse the position */
+	unsigned int leaf = 0; /* always starts at zero */
+	do
+	{
+		leaf = (leaf << 1) + (reverse & 1);
+		reverse >>= 1;
+	} while(--fill);
+	
+	/* used after reversing*/
+	return leaf;
+}
+
 /* Build a fast huffman decode table from the symbol bit lengths.         */
 /* There is an alternate algorithm which is faster but also more complex. */
 
-int make_decode_table(int number_symbols, int table_size,
-                      unsigned char *length, unsigned short *table)
+int make_decode_table(int number_symbols, int table_size, unsigned char *length, unsigned short *table)
 {
 	// "register" keyword is mostly ignored in modern compilers..
-	unsigned char bit_num = 0;
-	int symbol = 0;
-	unsigned int leaf; /* could be a register */
+	//int symbol = 0; // always reset at start of scope.. -> make scoped
+	//unsigned int leaf; // always reset at start of scope -> make scoped
 	unsigned int table_mask, bit_mask, pos, fill, next_symbol, reverse;
-	int abort = 0;
+	unsigned char bit_num = 1; // truly start at 1 (skip one increment..)
+	
+	int abort = 0; // throw exception instead?
 
 	pos = 0; /* consistantly used as the current position in the decode table */
 
 	bit_mask = table_mask = 1 << table_size;
-
 	bit_mask >>= 1; /* don't do the first number */
-	bit_num++;
+	
 
 	while((!abort) && (bit_num <= table_size))
 	{
-		for(symbol = 0; symbol < number_symbols; symbol++)
+		for(int symbol = 0; symbol < number_symbols; symbol++)
 		{
 			if(length[symbol] == bit_num)
 			{
 				reverse = pos; /* reverse the order of the position's bits */
-				leaf = 0;
 				fill = table_size;
-				do /* reverse the position */
-				{
-					leaf = (leaf << 1) + (reverse & 1);
-					reverse >>= 1;
-				} while(--fill);
-
+				
+				/* reverse the position */
+				unsigned int leaf = reverse_position(fill, reverse);
+				
 				if((pos += bit_mask) > table_mask)
 				{
 					abort = 1;
@@ -177,18 +191,17 @@ int make_decode_table(int number_symbols, int table_size,
 
 	if((!abort) && (pos != table_mask))
 	{
-		for(symbol = pos; symbol < table_mask; symbol++) /* clear the rest of the table */
+		for(int symbol = pos; symbol < table_mask; symbol++) /* clear the rest of the table */
 		{
 			reverse = symbol; /* reverse the order of the position's bits */
-			leaf = 0;
 			fill = table_size;
-			do /* reverse the position */
-			{
-				leaf = (leaf << 1) + (reverse & 1);
-				reverse >>= 1;
-			} while(--fill);
+			
+			/* reverse the position */
+			unsigned int leaf = reverse_position(fill, reverse);
+			
 			table[leaf] = 0;
 		}
+		
 		next_symbol = table_mask >> 1;
 		pos <<= 16;
 		table_mask <<= 16;
@@ -196,18 +209,16 @@ int make_decode_table(int number_symbols, int table_size,
 
 		while((!abort) && (bit_num <= 16))
 		{
-			for(symbol = 0; symbol < number_symbols; symbol++)
+			for(int symbol = 0; symbol < number_symbols; symbol++)
 			{
 				if(length[symbol] == bit_num)
 				{
 					reverse = pos >> 16; /* reverse the order of the position's bits */
-					leaf = 0;
 					fill = table_size;
-					do /* reverse the position */
-					{
-						leaf = (leaf << 1) + (reverse & 1);
-						reverse >>= 1;
-					} while(--fill);
+					
+					/* reverse the position */
+					unsigned int leaf = reverse_position(fill, reverse);
+					
 					for(fill = 0; fill < bit_num - table_size; fill++)
 					{
 						if(table[leaf] == 0)
@@ -219,6 +230,7 @@ int make_decode_table(int number_symbols, int table_size,
 						leaf = table[leaf] << 1;
 						leaf += (pos >> (15 - fill)) & 1;
 					}
+					
 					table[leaf] = symbol;
 					if((pos += bit_mask) > table_mask)
 					{
@@ -234,10 +246,70 @@ int make_decode_table(int number_symbols, int table_size,
 
 	if(pos != table_mask) 
 	{
+		// TODO: throw exception instead?
 		abort = 1; /* the table is incomplete! */
 	}
 
 	return(abort);
+}
+
+// TODO: change names of globals later..
+// (hint compiler to inline function, can't force though..)
+inline void fix_shift_control_word(int &shift, unsigned int &control)
+{
+	shift += 16;
+	control += *source++ << (8 + shift);
+	control += *source++ << shift;
+}
+
+inline void fix_shift_control_long(int &shift, unsigned int &control)
+{
+	shift += 16;
+	control += *source++ << 24;
+	control += *source++ << 16;
+}
+
+// two cases only but shortens read_literal_table() slightly..
+void symbol_longer_than_6_bits(int &shift, unsigned int &control, unsigned int &symbol)
+{
+	/* when symbol is longer than 6 bits */
+	do
+	{
+		symbol = huffman20_table[((control >> 6) & 1) + (symbol << 1)];
+		if(!shift--)
+		{
+			fix_shift_control_long(shift, control);
+		}
+		control >>= 1;
+	} while(symbol >= 20);
+}
+
+// just shortens read_literal_table() slightly..
+void read_decrunch_length(int &shift, unsigned int &control, unsigned int &decrunch_length)
+{
+	decrunch_length = (control & 255) << 16;
+	
+	control >>= 8;
+	if((shift -= 8) < 0)
+	{
+		fix_shift_control_word(shift, control);
+	}
+	
+	decrunch_length += (control & 255) << 8;
+
+	control >>= 8;
+	if((shift -= 8) < 0)
+	{
+		fix_shift_control_word(shift, control);
+	}
+	
+	decrunch_length += (control & 255);
+
+	control >>= 8;
+	if((shift -= 8) < 0)
+	{
+		fix_shift_control_word(shift, control);
+	}
 }
 
 /* Read and build the decrunch tables. There better be enough data in the */
@@ -253,14 +325,12 @@ int read_literal_table(unsigned int &global_control, int &global_shift, unsigned
 	// (case where no loop -> init was skipped and used anyway..)
 	// 
 	unsigned int temp = 0; /* could be a register */ // <- !! should be initialized !!
-	unsigned int symbol, pos, count, fix, max_symbol;
-	int abort = 0;
+	unsigned int symbol, count;
+	int abort = 0; // throw exception instead?
 
 	if(shift < 0) /* fix the control word if necessary */
 	{
-		shift += 16;
-		control += *source++ << (8 + shift);
-		control += *source++ << shift;
+		fix_shift_control_word(shift, control);
 	}
 
 	/* read the decrunch method */
@@ -268,9 +338,7 @@ int read_literal_table(unsigned int &global_control, int &global_shift, unsigned
 	control >>= 3;
 	if((shift -= 3) < 0)
 	{
-		shift += 16;
-		control += *source++ << (8 + shift);
-		control += *source++ << shift;
+		fix_shift_control_word(shift, control);
 	}
 
 	/* Read and build the offset huffman table */
@@ -282,9 +350,7 @@ int read_literal_table(unsigned int &global_control, int &global_shift, unsigned
 			control >>= 3;
 			if((shift -= 3) < 0)
 			{
-				shift += 16;
-				control += *source++ << (8 + shift);
-				control += *source++ << shift;
+				fix_shift_control_word(shift, control);
 			}
 		}
 		abort = make_decode_table(8, 7, offset_len, offset_table);
@@ -293,38 +359,16 @@ int read_literal_table(unsigned int &global_control, int &global_shift, unsigned
 	/* read decrunch length */
 	if(!abort)
 	{
-		decrunch_length = (control & 255) << 16;
-		control >>= 8;
-		if((shift -= 8) < 0)
-		{
-			shift += 16;
-			control += *source++ << (8 + shift);
-			control += *source++ << shift;
-		}
-		decrunch_length += (control & 255) << 8;
-		control >>= 8;
-		if((shift -= 8) < 0)
-		{
-			shift += 16;
-			control += *source++ << (8 + shift);
-			control += *source++ << shift;
-		}
-		decrunch_length += (control & 255);
-		control >>= 8;
-		if((shift -= 8) < 0)
-		{
-			shift += 16;
-			control += *source++ << (8 + shift);
-			control += *source++ << shift;
-		}
+		read_decrunch_length(shift, control, decrunch_length);
 	}
 
 	/* read and build the huffman literal table */
 	if((!abort) && (decrunch_method != 1))
 	{
-		pos = 0;
-		fix = 1;
-		max_symbol = 256;
+		// only used in this scope..
+		unsigned int pos = 0;
+		unsigned int fix = 1;
+		unsigned int max_symbol = 256;
 
 		do
 		{
@@ -334,13 +378,11 @@ int read_literal_table(unsigned int &global_control, int &global_shift, unsigned
 				control >>= 4;
 				if((shift -= 4) < 0)
 				{
-					shift += 16;
-					control += *source++ << (8 + shift);
-					control += *source++ << shift;
+					fix_shift_control_word(shift, control);
 				}
 			}
+			
 			abort = make_decode_table(20, 6, huffman20_len, huffman20_table);
-
 			if(abort) 
 			{
 				break; /* argh! table is corrupt! */
@@ -348,31 +390,21 @@ int read_literal_table(unsigned int &global_control, int &global_shift, unsigned
 
 			do
 			{
-				if((symbol = huffman20_table[control & 63]) >= 20)
+				symbol = huffman20_table[control & 63];
+				if(symbol >= 20)
 				{
-					do /* symbol is longer than 6 bits */
-					{
-						symbol = huffman20_table[((control >> 6) & 1) + (symbol << 1)];
-						if(!shift--)
-						{
-							shift += 16;
-							control += *source++ << 24;
-							control += *source++ << 16;
-						}
-						control >>= 1;
-					} while(symbol >= 20);
+					symbol_longer_than_6_bits(shift, control, symbol);
 					temp = 6;
 				}
 				else
 				{
 					temp = huffman20_len[symbol];
 				}
+				
 				control >>= temp;
 				if((shift -= temp) < 0)
 				{
-					shift += 16;
-					control += *source++ << (8 + shift);
-					control += *source++ << shift;
+					fix_shift_control_word(shift, control);
 				}
 
 				switch(symbol)
@@ -390,71 +422,64 @@ int read_literal_table(unsigned int &global_control, int &global_shift, unsigned
 						temp = 6 - fix;
 						count = 19;
 					}
+					
 					count += (control & table_three[temp]) + fix;
 					control >>= temp;
 					if((shift -= temp) < 0)
 					{
-						shift += 16;
-						control += *source++ << (8 + shift);
-						control += *source++ << shift;
+						fix_shift_control_word(shift, control);
 					}
+					
 					while((pos < max_symbol) && (count--))
 					{
 						literal_len[pos++] = 0;
 					}
 					break;
-				}
+				} // case 17, case 18
+
 				case 19:
 				{
 					count = (control & 1) + 3 + fix;
 					if(!shift--)
 					{
-						shift += 16;
-						control += *source++ << 24;
-						control += *source++ << 16;
+						fix_shift_control_long(shift, control);
 					}
+					
 					control >>= 1;
-					if((symbol = huffman20_table[control & 63]) >= 20)
+					symbol = huffman20_table[control & 63];
+					if(symbol >= 20)
 					{
-						do /* symbol is longer than 6 bits */
-						{
-							symbol = huffman20_table[((control >> 6) & 1) + (symbol << 1)];
-							if(!shift--)
-							{
-								shift += 16;
-								control += *source++ << 24;
-								control += *source++ << 16;
-							}
-							control >>= 1;
-						} while(symbol >= 20);
+						symbol_longer_than_6_bits(shift, control, symbol);
 						temp = 6;
 					}
 					else
 					{
 						temp = huffman20_len[symbol];
 					}
+					
 					control >>= temp;
 					if((shift -= temp) < 0)
 					{
-						shift += 16;
-						control += *source++ << (8 + shift);
-						control += *source++ << shift;
+						fix_shift_control_word(shift, control);
 					}
+					
 					symbol = table_four[literal_len[pos] + 17 - symbol];
 					while((pos < max_symbol) && (count--))
 					{
 						literal_len[pos++] = symbol;
 					}
 					break;
-				}
+				} // case 19
+
 				default:
 				{
 					symbol = table_four[literal_len[pos] + 17 - symbol];
 					literal_len[pos++] = symbol;
 					break;
-				}
+				} // default
 				} // switch
 			} while(pos < max_symbol);
+			
 			fix--;
 			max_symbol += 512;
 		} while(max_symbol == 768);
@@ -474,7 +499,7 @@ int read_literal_table(unsigned int &global_control, int &global_shift, unsigned
 /* Fill up the decrunch buffer. Needs lots of overrun for both destination */
 /* and source buffers. Most of the time is spent in this routine so it's  */
 /* pretty damn optimized. */
-void decrunch(unsigned int &global_control, int &global_shift, unsigned int &decrunch_method)
+void decrunch(unsigned int &global_control, int &global_shift, unsigned int &last_offset, unsigned int &decrunch_method)
 {
 	unsigned int control = global_control; // could be removed
 	int shift = global_shift; // could be removed
@@ -484,23 +509,22 @@ void decrunch(unsigned int &global_control, int &global_shift, unsigned int &dec
 
 	do
 	{
-		if((symbol = literal_table[control & 4095]) >= 768)
+		symbol = literal_table[control & 4095];
+		if(symbol >= 768)
 		{
 			control >>= 12;
 			if((shift -= 12) < 0)
 			{
-				shift += 16;
-				control += *source++ << (8 + shift);
-				control += *source++ << shift;
+				fix_shift_control_word(shift, control);
 			}
-			do /* literal is longer than 12 bits */
+			
+			/* literal is longer than 12 bits */
+			do
 			{
 				symbol = literal_table[(control & 1) + (symbol << 1)];
 				if(!shift--)
 				{
-					shift += 16;
-					control += *source++ << 24;
-					control += *source++ << 16;
+					fix_shift_control_long(shift, control);
 				}
 				control >>= 1;
 			} while(symbol >= 768);
@@ -511,9 +535,7 @@ void decrunch(unsigned int &global_control, int &global_shift, unsigned int &dec
 			control >>= temp;
 			if((shift -= temp) < 0)
 			{
-				shift += 16;
-				control += *source++ << (8 + shift);
-				control += *source++ << shift;
+				fix_shift_control_word(shift, control);
 			}
 		}
 
@@ -533,9 +555,7 @@ void decrunch(unsigned int &global_control, int &global_shift, unsigned int &dec
 				control >>= temp;
 				if((shift -= temp) < 0)
 				{
-					shift += 16;
-					control += *source++ << (8 + shift);
-					control += *source++ << shift;
+					fix_shift_control_word(shift, control);
 				}
 				count += (temp = offset_table[control & 127]);
 				temp = offset_len[temp];
@@ -548,12 +568,11 @@ void decrunch(unsigned int &global_control, int &global_shift, unsigned int &dec
 					count = last_offset;
 				}
 			}
+			
 			control >>= temp;
 			if((shift -= temp) < 0)
 			{
-				shift += 16;
-				control += *source++ << (8 + shift);
-				control += *source++ << shift;
+				fix_shift_control_word(shift, control);
 			}
 			last_offset = count;
 
@@ -561,15 +580,15 @@ void decrunch(unsigned int &global_control, int &global_shift, unsigned int &dec
 			temp = table_one[temp];
 			count += (control & table_three[temp]);
 			control >>= temp;
+			
 			if((shift -= temp) < 0)
 			{
-				shift += 16;
-				control += *source++ << (8 + shift);
-				control += *source++ << shift;
+				fix_shift_control_word(shift, control);
 			}
 
 			unsigned char *string = (decrunch_buffer + last_offset < destination) ?
-					destination - last_offset : destination + 65536 - last_offset;
+					destination - last_offset : 
+					destination + 65536 - last_offset;
 
 			// note: in theory could replace loop with
 			// ::memcpy(destination, string, count);
@@ -773,10 +792,10 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 {
 	unsigned char *pos = nullptr;
 	unsigned char *temp = nullptr;
+	unsigned int last_offset = 1;
 
 	g_global_control = 0; /* initial control word */
 	g_global_shift = -16;
-	last_offset = 1;
 
 	::memset(offset_len, 0, sizeof(unsigned char)*8);
 	::memset(literal_len, 0, sizeof(unsigned char)*768);
@@ -885,7 +904,7 @@ bool CUnLzx::ExtractNormal(CAnsiFile &ArchiveFile)
 				}
 				temp = destination;
 
-				decrunch(g_global_control, g_global_shift, g_decrunch_method);
+				decrunch(g_global_control, g_global_shift, last_offset, g_decrunch_method);
 
 				g_decrunch_length -= (destination - temp);
 			}
