@@ -104,7 +104,7 @@ public:
 	unsigned long GetTotalSizeUnpacked();
 	unsigned long GetTotalSizePacked();
 	unsigned long GetTotalFileCount();
-	unsigned long GetMergeSize();
+	//unsigned long GetMergeSize(); // per-group only
 	
 };
 

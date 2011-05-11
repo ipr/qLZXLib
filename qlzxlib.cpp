@@ -70,10 +70,11 @@ bool QLZXLib::List(QLZXLib::tEntryInfoList &lstArchiveInfo)
 	try
 	{
 		tArchiveEntryList lstFiles;
-		if (m_pLZXHandler->View(lstFiles) == false)
+		if (m_pLZXHandler->View() == false)
 		{
 			return false;
 		}
+		m_pLZXHandler->GetEntryList(lstFiles);
 		
 		// must make copy for caller
 		
@@ -137,8 +138,11 @@ unsigned long QLZXLib::GetTotalFileCount()
 { 
 	return m_pLZXHandler->GetTotalFileCount(); 
 }
+
+/* // per merge-group only
 unsigned long QLZXLib::GetMergeSize()
 {
 	return m_pLZXHandler->GetMergeSize(); 
 }
+*/
 
