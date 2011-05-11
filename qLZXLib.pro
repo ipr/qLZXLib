@@ -14,9 +14,11 @@ DEFINES += _CRT_SECURE_NO_WARNINGS
 
 SOURCES += qlzxlib.cpp \
     UnLzx.cpp \
-    AnsiFile.cpp
+    AnsiFile.cpp \
+    CrcSum.cpp
 
 HEADERS += qlzxlib.h\
         qLZXLib_global.h \
     UnLzx.h \
-    AnsiFile.h
+    AnsiFile.h \
+    CrcSum.h
