@@ -83,10 +83,6 @@ bool QLZXLib::List(QLZXLib::tEntryInfoList &lstArchiveInfo)
 		{
 			CArchiveEntry &ArcEntry = it->second;
 
-			unsigned int year, month, day;
-			unsigned int hour, minute, second;
-			ArcEntry.m_Header.GetTimestampParts(year, month, day, hour, minute, second);
-			
 			lstArchiveInfo.push_back(CEntryInfo());
 			CEntryInfo &Info = lstArchiveInfo.back();
 			
@@ -99,8 +95,8 @@ bool QLZXLib::List(QLZXLib::tEntryInfoList &lstArchiveInfo)
 			Info.m_ulUnpackedSize = ArcEntry.m_ulUnpackedSize;
 			Info.m_ulPackedSize = ArcEntry.m_ulPackedSize;
 			
-			Info.m_Date = QDate(year, month, day);
-			Info.m_Time = QTime(hour, minute, second);
+			Info.m_Date = QDate(ArcEntry.m_Timestamp.year, ArcEntry.m_Timestamp.month, ArcEntry.m_Timestamp.day);
+			Info.m_Time = QTime(ArcEntry.m_Timestamp.hour, ArcEntry.m_Timestamp.minute, ArcEntry.m_Timestamp.second);
 
 			Info.m_szFileName = QString::fromStdString(ArcEntry.m_szFileName);
 			Info.m_szComment = QString::fromStdString(ArcEntry.m_szComment);
