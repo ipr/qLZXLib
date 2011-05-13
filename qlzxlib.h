@@ -83,6 +83,8 @@ public:
 	
 public slots:
 	void SetArchive(QString szArchive);
+	void SetAllowBadCrc(const bool bValue);
+	void SetSkipUnknownPackMode(const bool bValue);
 
 	//////////////////	
 	// actual operations below

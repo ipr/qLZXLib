@@ -50,13 +50,24 @@ void QLZXLib::SetArchive(QString szArchive)
 	PrepareArchive(szArchive);
 }
 
+void QLZXLib::SetAllowBadCrc(const bool bValue)
+{
+	m_pLZXHandler->SetAllowBadCrc(bValue);
+}
+
+void QLZXLib::SetSkipUnknownPackMode(const bool bValue)
+{
+	m_pLZXHandler->SetSkipUnknownPackMode(bValue);
+}
+
 ///////// actual operations below
 
 bool QLZXLib::Extract(QString &szExtractPath)
 {
 	try
 	{
-		return m_pLZXHandler->Extract(szExtractPath.toStdString());
+		m_pLZXHandler->SetExtractPath(szExtractPath.toStdString());
+		return m_pLZXHandler->Extract();
 	}
 	catch (std::exception &exp)
 	{
@@ -82,25 +93,25 @@ bool QLZXLib::List(QLZXLib::tEntryInfoList &lstArchiveInfo)
 		auto itEnd = lstFiles.end();
 		while (it != itEnd)
 		{
-			CArchiveEntry &ArcEntry = it->second;
+			CArchiveEntry *pEntry = it->second;
 
 			lstArchiveInfo.push_back(CEntryInfo());
 			CEntryInfo &Info = lstArchiveInfo.back();
 			
-			Info.m_bIsMerged = ArcEntry.m_bIsMerged;
-			Info.m_bPackedSizeAvailable = ArcEntry.m_bPackedSizeAvailable;
+			Info.m_bIsMerged = pEntry->m_bIsMerged;
+			Info.m_bPackedSizeAvailable = pEntry->m_bPackedSizeAvailable;
 			
-			Info.m_uiCrc = ArcEntry.m_uiCrc;
-			Info.m_uiDataCrc = ArcEntry.m_uiDataCrc;
+			Info.m_uiCrc = pEntry->m_uiCrc;
+			Info.m_uiDataCrc = pEntry->m_uiDataCrc;
 			
-			Info.m_ulUnpackedSize = ArcEntry.m_ulUnpackedSize;
-			Info.m_ulPackedSize = ArcEntry.m_ulPackedSize;
+			Info.m_ulUnpackedSize = pEntry->m_ulUnpackedSize;
+			Info.m_ulPackedSize = pEntry->m_ulPackedSize;
 			
-			Info.m_Date = QDate(ArcEntry.m_Timestamp.year, ArcEntry.m_Timestamp.month, ArcEntry.m_Timestamp.day);
-			Info.m_Time = QTime(ArcEntry.m_Timestamp.hour, ArcEntry.m_Timestamp.minute, ArcEntry.m_Timestamp.second);
+			Info.m_Date = QDate(pEntry->m_Timestamp.year, pEntry->m_Timestamp.month, pEntry->m_Timestamp.day);
+			Info.m_Time = QTime(pEntry->m_Timestamp.hour, pEntry->m_Timestamp.minute, pEntry->m_Timestamp.second);
 
-			Info.m_szFileName = QString::fromStdString(ArcEntry.m_szFileName);
-			Info.m_szComment = QString::fromStdString(ArcEntry.m_szComment);
+			Info.m_szFileName = QString::fromStdString(pEntry->m_szFileName);
+			Info.m_szComment = QString::fromStdString(pEntry->m_szComment);
 			
 			++it;
 		}
