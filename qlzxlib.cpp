@@ -95,6 +95,17 @@ bool QLZXLib::List(QLZXLib::tEntryInfoList &lstArchiveInfo)
 		{
 			CArchiveEntry *pEntry = it->second;
 
+			/*
+			// empty "store-only" file?
+			// -> some cases have this for directory-entry..
+			if (pEntry->m_ulUnpackedSize == 0
+				&& pEntry->m_PackMode == tLzxArchiveHeader::HDR_PACK_STORE)
+			{
+				++it;
+				continue;
+			}
+			*/
+			
 			lstArchiveInfo.push_back(CEntryInfo());
 			CEntryInfo &Info = lstArchiveInfo.back();
 			
