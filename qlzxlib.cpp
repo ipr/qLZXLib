@@ -76,6 +76,28 @@ bool QLZXLib::Extract(QString &szExtractPath)
 	return false;
 }
 
+// extract selected file(s) into disk
+// note: needs to extract also other files in same merge-group
+// when decompressing (compressed together)
+// -> see merge-group handling.. 
+bool QLZXLib::ExtractSelected(QString &szExtractPath, QStringList &lstFiles)
+{
+	// not yet implemented
+	return false;
+}
+
+// extract single (selected) file from archive to user-given buffer
+// for easy use within application
+// note: needs to extract also other files in same merge-group
+// when decompressing (compressed together)
+// -> see merge-group handling.. 
+// -> decompress others somewhere and cleanup..?
+bool QLZXLib::ExtractToBuffer(QString &szFileEntry, QByteArray &outArray)
+{
+	// not yet implemented
+	return false;
+}
+
 bool QLZXLib::List(QLZXLib::tEntryInfoList &lstArchiveInfo)
 {
 	try
@@ -133,6 +155,14 @@ bool QLZXLib::List(QLZXLib::tEntryInfoList &lstArchiveInfo)
 	{
 		emit fatal_error(exp.what());
 	}
+	return false;
+}
+
+// test archive integrity
+// (simulate extraction without output)
+bool QLZXLib::Test()
+{
+	// not implemented yet
 	return false;
 }
 

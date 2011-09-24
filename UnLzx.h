@@ -1096,12 +1096,16 @@ public:
 	//
 	bool Extract();
 
+	// TODO: extraction variations for caller simplicity..
+	//bool ExtractSelected(QStringList &lstFiles);
+	//bool ExtractToBuffer(QString &szFileEntry, QByteArray &outArray);
+	
 	bool SetExtractPath(const std::string &szOutPath);
 
 	// TODO:
 	// verify archive integrity
 	//
-	//bool TestArchive();
+	bool TestArchive();
 
 	// information about archive file itself
 	std::string GetArchiveFileName()
